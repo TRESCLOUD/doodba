@@ -1,5 +1,4 @@
-ARG PYTHON_VERSION=3.12
-FROM python:${PYTHON_VERSION}-slim-bookworm AS base
+FROM python:3.12-slim-bookworm AS base
 
 EXPOSE 8069 8072
 
@@ -87,7 +86,7 @@ RUN echo "LAST_SYSTEM_UID=$LAST_SYSTEM_UID\nLAST_SYSTEM_GID=$LAST_SYSTEM_GID\nFI
 
 WORKDIR /opt/odoo
 COPY bin/* /usr/local/bin/
-COPY lib/doodbalib /usr/local/lib/python${PYTHON_VERSION}/site-packages/doodbalib
+COPY lib/doodbalib /usr/local/lib/python3.12/site-packages/doodbalib
 COPY build.d common/build.d
 COPY conf.d common/conf.d
 COPY entrypoint.d common/entrypoint.d
@@ -97,7 +96,7 @@ RUN mkdir -p auto/addons auto/geoip custom/src/private \
     && ln /usr/local/bin/direxec common/entrypoint \
     && ln /usr/local/bin/direxec common/build \
     && chmod -R a+rx common/entrypoint* common/build* /usr/local/bin \
-    && chmod -R a+rX /usr/local/lib/python${PYTHON_VERSION}/site-packages/doodbalib \
+    && chmod -R a+rX /usr/local/lib/python3.12/site-packages/doodbalib \
     && cp -a /etc/GeoIP.conf /etc/GeoIP.conf.orig \
     && mv /etc/GeoIP.conf /opt/odoo/auto/geoip/GeoIP.conf \
     && ln -s /opt/odoo/auto/geoip/GeoIP.conf /etc/GeoIP.conf \
@@ -166,7 +165,7 @@ RUN build_deps=" \
         python-magic \
         watchdog \
         wdb \
-    && (python3 -m compileall -q /usr/local/lib/python${PYTHON_VERSION}/ || true) \
+    && (python3 -m compileall -q /usr/local/lib/python3.12/ || true) \
     # generate flanker cached tables during install when /usr/local/lib/ is still intended to be written to
     # https://github.com/Tecnativa/doodba/issues/486
     && python3 -c 'from flanker.addresslib import address' >/dev/null 2>&1 \
