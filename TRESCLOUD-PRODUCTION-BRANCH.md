@@ -105,3 +105,18 @@ bash install_all.sh --version 18.0
 Copier usados para v18. Este repo (`doodba`) y esa rama en particular son solo
 la pieza "imagen base" de ese proceso — no reemplazan al instalador ni
 duplican su documentación.
+
+El `install_all.sh` clona el repo de infraestructura del cliente (`<cliente>_infra`),
+que a su vez nace de clonar/generar con Copier
+[`TRESCLOUD/odoo-infra-base-template`](https://github.com/TRESCLOUD/odoo-infra-base-template)
+(rama `18.0`) — ese repo trae el `odoo/Dockerfile` que hace
+`FROM patriciorangles/doodba-v18:latest`, la imagen que se construye desde
+esta rama.
+
+**Los 3 repos, en orden de uso:**
+
+1. **`doodba`** (este repo, esta rama) → produce la imagen base.
+2. **`odoo-infra-base-template`** → la plantilla del proyecto Doodba que
+   referencia esa imagen; se clona/genera una vez por cliente.
+3. **`odoo-doodba-install-toolkit`** → orquesta el deploy completo en el
+   servidor del cliente, usando lo que generan los dos anteriores.
