@@ -1,3 +1,11 @@
+# TRESCLOUD: versión de Python parametrizable. ÚNICO cambio real vs. el
+# 20.0.Dockerfile de Tecnativa/doodba — ver TRESCLOUD-PRODUCTION-BRANCH.md
+# para el porqué (localización compilada con Nuitka, versión exacta de Python).
+# Debe declararse ANTES del primer FROM del archivo (alcance global) para
+# que --build-arg funcione; si se mueve de lugar, deja de tener efecto.
+# Nombre propio (no "PYTHON_VERSION") para no chocar con la variable de
+# entorno del mismo nombre que ya trae la imagen oficial de Python.
+ARG DOODBA_PYTHON_BASE_TAG=3.14
 FROM scratch AS ctx
 COPY system_files /
 FROM curlimages/curl:8.21.0 AS downloader
@@ -27,7 +35,7 @@ RUN if [ "$TARGETARCH" = "arm64" ]; then \
     && echo "Computed wkhtmltox checksum: $(sha256sum wkhtmltox.deb | awk '{ print $1 }')" \
     && echo "${WKHTMLTOPDF_CHECKSUM} wkhtmltox.deb" | sha256sum -c - \
     && curl -L --output geoipupdate.deb ${GEOIP_URL}
-FROM python:3.12-slim-bookworm AS foundation
+FROM python:${DOODBA_PYTHON_BASE_TAG}-slim-bookworm AS foundation
 ARG ODOO_VERSION=20.0
 ENV ODOO_VERSION="$ODOO_VERSION"
 EXPOSE 8069 8072
