@@ -15,12 +15,12 @@ No hay CI/CD ni Jenkinsfile para este build — hasta ahora siempre se hizo a ma
 Si se automatiza después (Jenkins, GitHub Actions), actualizar aquí la
 referencia, no borrarlo.
 
-## Qué se customiza, versión por versión
+## Qué se customiza
 
-| Odoo | Rama                        | Único cambio real vs. el Dockerfile de `Tecnativa/doodba` | Imagen publicada |
-|------|-----------------------------|-------------------------------------------------------------|-------------------|
-| 18.0 | `trescloud-v18-production`  | `ARG DOODBA_PYTHON_BASE_TAG=3.12` parametrizando el `FROM` (default 3.12; solo validado en ese valor, ver limitación en `TRESCLOUD-PRODUCTION-BRANCH.md`). | `patriciorangles/doodba-v18:latest` |
-| 20.0 | *(pendiente de certificar — en sandbox, no tiene rama de producción todavía)* | Mismo patrón, default 3.14 (la localización compilada de Ecuador para v20 solo carga en Python 3.14, confirmado contra `odoo-sh-template`). | `patriciorangles/doodba-v20:latest` |
+Rama: `trescloud-v18-production`. Único cambio real vs. el Dockerfile de
+`Tecnativa/doodba`: `ARG DOODBA_PYTHON_BASE_TAG=3.12` parametrizando el
+`FROM` (default 3.12; solo validado en ese valor, ver limitación en
+`TRESCLOUD-PRODUCTION-BRANCH.md`). Imagen publicada: `patriciorangles/doodba-v18:latest`.
 
 ## Build local + publicación
 
