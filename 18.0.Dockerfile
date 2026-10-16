@@ -1,4 +1,16 @@
-FROM python:3.12-slim-bookworm AS base
+# TRESCLOUD: versión de Python parametrizable. ÚNICO cambio real vs. el
+# 18.0.Dockerfile de Tecnativa/doodba — ver TRESCLOUD-PRODUCTION-BRANCH.md
+# para el porqué (localización compilada con Nuitka, versión exacta de Python).
+# Debe declararse ANTES del primer FROM del archivo (alcance global) para
+# que --build-arg funcione; si se mueve de lugar, deja de tener efecto.
+#
+# OJO: esta rama solo está validada con el default (3.12). Hay otro pin de
+# versión más abajo (gevent==23.9.1 / greenlet==3.0.3, "para compatibilidad
+# con 3.12") que NO compila contra 3.14 (falla el build de Cython de gevent).
+# Cambiar DOODBA_PYTHON_BASE_TAG aquí no alcanza para otra versión de Python
+# sin revisar también ese pin.
+ARG DOODBA_PYTHON_BASE_TAG=3.12
+FROM python:${DOODBA_PYTHON_BASE_TAG}-slim-bookworm AS base
 
 EXPOSE 8069 8072
 
@@ -86,7 +98,8 @@ RUN echo "LAST_SYSTEM_UID=$LAST_SYSTEM_UID\nLAST_SYSTEM_GID=$LAST_SYSTEM_GID\nFI
 
 WORKDIR /opt/odoo
 COPY bin/* /usr/local/bin/
-COPY lib/doodbalib /usr/local/lib/python3.12/site-packages/doodbalib
+ARG DOODBA_PYTHON_BASE_TAG
+COPY lib/doodbalib /usr/local/lib/python${DOODBA_PYTHON_BASE_TAG}/site-packages/doodbalib
 COPY build.d common/build.d
 COPY conf.d common/conf.d
 COPY entrypoint.d common/entrypoint.d
@@ -96,7 +109,7 @@ RUN mkdir -p auto/addons auto/geoip custom/src/private \
     && ln /usr/local/bin/direxec common/entrypoint \
     && ln /usr/local/bin/direxec common/build \
     && chmod -R a+rx common/entrypoint* common/build* /usr/local/bin \
-    && chmod -R a+rX /usr/local/lib/python3.12/site-packages/doodbalib \
+    && chmod -R a+rX /usr/local/lib/python${DOODBA_PYTHON_BASE_TAG}/site-packages/doodbalib \
     && cp -a /etc/GeoIP.conf /etc/GeoIP.conf.orig \
     && mv /etc/GeoIP.conf /opt/odoo/auto/geoip/GeoIP.conf \
     && ln -s /opt/odoo/auto/geoip/GeoIP.conf /etc/GeoIP.conf \
@@ -165,7 +178,7 @@ RUN build_deps=" \
         python-magic \
         watchdog \
         wdb \
-    && (python3 -m compileall -q /usr/local/lib/python3.12/ || true) \
+    && (python3 -m compileall -q /usr/local/lib/python${DOODBA_PYTHON_BASE_TAG}/ || true) \
     # generate flanker cached tables during install when /usr/local/lib/ is still intended to be written to
     # https://github.com/Tecnativa/doodba/issues/486
     && python3 -c 'from flanker.addresslib import address' >/dev/null 2>&1 \
