@@ -53,25 +53,37 @@ principio el patrón ya corregido (alcance global, nombre propio
 imagen oficial) — ver `trescloud-v18-production` para el detalle completo de
 qué salió mal la primera vez.
 
-## Segundo parche: permisos de grupo en `/opt/odoo/custom/ssh`
+## Segundo parche: dueño de `/opt/odoo/custom/ssh` debe ser UID/GID 1000
 
-Línea 273-277 de `20.0.Dockerfile` (código original de Tecnativa, no
+Línea 273-278 de `20.0.Dockerfile` (código original de Tecnativa, no
 customización nuestra): `autoaggregate` (el script que corre
 `invoke git-aggregate`) baja privilegios a `UID=GID=1000` (el usuario/grupo
 `odoo`) antes de ejecutar `git fetch`, para que el código clonado no quede
-de root. Pero el `chmod -R u=rwX,go=` dejaba las deploy keys legibles
-**solo** por `root` — el grupo `odoo` (GID 1000) no tenía ningún permiso.
-Resultado: en el momento exacto de clonar un repo privado por SSH, el
-proceso ya no es root y no puede leer su propia llave
-(`no such identity: ...: Permission denied`), fallando en silencio porque
-`invoke git-aggregate` corre con reintentos que tragan el error.
+de root. El `chmod -R u=rwX,go=` original dejaba las deploy keys legibles
+**solo** por su dueño, que era `root` (por el `COPY --chown=root:odoo`
+anterior) — el proceso, ya sin privilegios de root, no podía leer su
+propia llave (`no such identity: ...: Permission denied`), fallando en
+silencio porque `invoke git-aggregate` corre con reintentos que tragan el
+error.
 
-Se cambió a `chmod -R u=rwX,g=rX,o=`: el grupo `odoo` gana lectura (que es
-justo con quien corre el fetch), `o=` se mantiene en cero (nada cambia de
-cara a terceros). Confirmado con una instalación real de punta a punta:
-sin este parche, los 3 repos privados por SSH (enterprise, localización
-compilada, repo de cliente) quedaban vacíos aunque el deploy se reportara
-exitoso.
+**Primer intento (incorrecto):** dar lectura al grupo `odoo`
+(`chmod -R u=rwX,g=rX,o=`). Falló distinto: OpenSSH rechaza *cualquier*
+permiso de grupo sobre una llave privada sin importar cuál grupo sea
+(`Permissions 0640 ... are too open`) — no es un chequeo de
+"¿coincide el grupo del que llama?", es un chequeo estricto de que el
+archivo no tenga bits de grupo/otros en absoluto.
+
+**Fix correcto:** cambiar el *dueño* del archivo a `${UID}:${GID}`
+(1000:1000 por defecto, el mismo usuario al que baja privilegios
+`autoaggregate`), manteniendo el chmod estricto original
+(`u=rwX,go=`, sin bits de grupo/otros). Así el proceso que baja a UID 1000
+es el dueño real del archivo y `0600` sigue satisfaciendo a OpenSSH. `root`
+sigue pudiendo leerlo igual (bypassa permisos de archivo por capacidad del
+kernel), así que el symlink `~root/.ssh` no se ve afectado.
+
+Confirmado con una instalación real de punta a punta: sin este parche,
+los 3 repos privados por SSH (enterprise, localización compilada, repo de
+cliente) quedaban vacíos aunque el deploy se reportara exitoso.
 
 **Pendiente verificar:** si `18.0` tiene el mismo problema potencial. Su
 `tasks.py` usa un mecanismo de aggregate distinto
