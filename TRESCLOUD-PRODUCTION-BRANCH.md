@@ -53,49 +53,124 @@ principio el patrón ya corregido (alcance global, nombre propio
 imagen oficial) — ver `trescloud-v18-production` para el detalle completo de
 qué salió mal la primera vez.
 
-## Segundo parche: dueño de `/opt/odoo/custom/ssh` debe ser UID/GID 1000
+## Segundo parche: permisos de las deploy keys SSH (5 intentos, causa real encontrada leyendo el código fuente de Doodba)
 
-Línea 273-278 de `20.0.Dockerfile` (código original de Tecnativa, no
-customización nuestra): `autoaggregate` (el script que corre
-`invoke git-aggregate`) baja privilegios a `UID=GID=1000` (el usuario/grupo
-`odoo`) antes de ejecutar `git fetch`, para que el código clonado no quede
-de root. El `chmod -R u=rwX,go=` original dejaba las deploy keys legibles
-**solo** por su dueño, que era `root` (por el `COPY --chown=root:odoo`
-anterior) — el proceso, ya sin privilegios de root, no podía leer su
-propia llave (`no such identity: ...: Permission denied`), fallando en
-silencio porque `invoke git-aggregate` corre con reintentos que tragan el
-error.
+**Por qué hace falta este parche en absoluto:** Doodba, por diseño, no
+espera que un proyecto guarde llaves SSH privadas como archivo dentro del
+repo. Su mecanismo nativo para que `devel-setup`/`autoaggregate` clone
+repos privados es **reenvío del agente SSH del operador humano**
+(`SSH_AUTH_SOCK`) — de hecho `devel-setup` en `devel.yaml` sobreescribe
+sus volúmenes para NO montar `/opt/odoo/custom/ssh` en absoluto, solo
+`/opt/odoo/custom/src`. TRESCLOUD usa en cambio 3 deploy keys fijas por
+proyecto, guardadas en el repo, registradas en GitHub como solo lectura
+(ver D7/D8 del documento de decisiones de arquitectura — esto es
+deliberado y, por diseño, más seguro que reenviar el agente completo del
+operador: una deploy key solo puede leer un repo; un agente reenviado
+normalmente tiene acceso de lectura/escritura a muchos más). Ese es el
+costo que hay que seguir pagando: hacer manualmente lo que Doodba no
+necesita resolver en su propio diseño.
+
+Como las llaves llegan por `COPY --chown=root:odoo` (línea 269,
+`ONBUILD COPY $LOCAL_CUSTOM_DIR /opt/odoo/custom`) y `autoaggregate` baja
+privilegios a `UID=GID=1000` (usuario `odoo`) antes de hacer `git fetch`,
+el proceso sin privilegios de root no podía leer su propia llave
+(`no such identity: ...: Permission denied`) — fallando en silencio
+porque `invoke git-aggregate` corre con reintentos que tragan el error.
 
 **Intento 1 (incorrecto):** dar lectura al grupo `odoo`
-(`chmod -R u=rwX,g=rX,o=`). Falló distinto: OpenSSH rechaza *cualquier*
-permiso de grupo sobre una llave privada sin importar cuál grupo sea
-(`Permissions 0640 ... are too open`) — no es un chequeo de
-"¿coincide el grupo del que llama?", es un chequeo estricto de que el
+(`chmod -R u=rwX,g=rX,o=`). Falló: OpenSSH rechaza *cualquier* permiso de
+grupo sobre una llave privada sin importar cuál grupo sea
+(`Permissions 0640 ... are too open`) — chequeo estricto de que el
 archivo no tenga bits de grupo/otros en absoluto.
 
 **Intento 2 (incorrecto):** `chown -R ${UID}:${GID}` a **todo** el
-directorio `/opt/odoo/custom/ssh`. Las llaves privadas sí quedaron
-legibles, pero esto también le cambió el dueño a `config` y
-`known_hosts` — y `autoaggregate` sigue usando `$HOME=/root` incluso
-después de bajar a UID 1000 (no cambia `$HOME` al hacer `setuid`), así
-que SSH resuelve `~/.ssh/config` → `/root/.ssh/config` (el symlink).
-OpenSSH exige que ese archivo de configuración sea dueño de `root` o del
-UID que lo invoca — con dueño `1000` falló con
+directorio `/opt/odoo/custom/ssh`. Las llaves quedaron legibles, pero
+también cambió el dueño de `config`/`known_hosts`, y `autoaggregate`
+sigue usando `$HOME=/root` incluso tras bajar a UID 1000 (no cambia
+`$HOME` al hacer `setuid`), así que SSH resuelve `~/.ssh/config` →
+`/root/.ssh/config` (el symlink). OpenSSH exige que ese archivo sea de
+`root` o del UID que invoca — con dueño `1000` falló con
 `Bad owner or permissions on /root/.ssh/config`.
 
-**Fix correcto:** aplicar el `chown ${UID}:${GID}` **solo** a los
-archivos `deploy_key_*` (no a `.pub`, no a `config`, no a `known_hosts`),
-dejando el resto del directorio tal como estaba (dueño `root`, que es
-justo lo que `config`/`known_hosts` necesitan). Las deploy keys quedan
-con dueño real UID 1000 (satisface tanto el chequeo de permisos como el
-de "soy el dueño"), y `config`/`known_hosts` se quedan de `root` como
-siempre. `root` sigue pudiendo leer las llaves igual (bypassa permisos
-de archivo por capacidad del kernel), así que el symlink `~root/.ssh`
-no se ve afectado para ningún otro uso.
+**Intento 3 (parecía funcionar, en realidad no):** `chown ${UID}:${GID}`
+**solo** a los archivos `deploy_key_*` (no `.pub`, no `config`, no
+`known_hosts`). Un diagnóstico insertado justo después del `chown`
+mostraba el resultado correcto. **Pero no servía en la imagen final:**
+`/opt/odoo/common/build.d/800-permissions` (script propio de Doodba, no
+nuestro, que corre sin condición alguna al final de cada build vía
+`/opt/odoo/common/build`) hace, entre otras cosas:
 
-Confirmado con una instalación real de punta a punta: sin este parche,
-los 3 repos privados por SSH (enterprise, localización compilada, repo de
-cliente) quedaban vacíos aunque el deploy se reportara exitoso.
+```python
+# Revierte a root:odoo cualquier archivo bajo /opt/odoo que no lo sea
+# ya (excepto symlinks) — SIN excepción para /opt/odoo/custom/ssh
+find /opt/odoo (-not -user root -or -not -group odoo) -not -type l \
+  | xargs chown root:odoo
+```
+
+Esto corre **después** de nuestro `chown` (está en un `ONBUILD RUN`
+posterior en el Dockerfile), así que revertía el resultado sin que el
+diagnóstico — ubicado antes de ese paso — lo notara. Encontrado releyendo
+el código fuente real de Doodba, no por prueba y error.
+
+**Intento 4 (incorrecto, por un detalle más sutil):** el mismo script
+`800-permissions` sí tiene una excepción explícita — si existe
+`/home/odoo/.ssh` como directorio, lo **chownea a `odoo:odoo`** sin
+tocar nada bajo `/opt/odoo`. Se intentó aprovechar esa excepción con un
+enlace simbólico (`ln -s /opt/odoo/custom/ssh /home/odoo/.ssh`). Falló
+igual: `800-permissions` ejecuta `chown -R odoo:odoo /home/odoo/.ssh`
+**sin `-H`**, y GNU coreutils con `-R` sin `-H`/`-L` usa por defecto
+`-P` — nunca sigue symlinks, **ni siquiera cuando el symlink es el
+propio argumento de la línea de comandos**. Confirmado en vivo dentro de
+un contenedor: `chown -R` sobre el symlink no tocaba el directorio real;
+el mismo comando con `-RH` sí. Como Doodba no usa `-H`, su propia
+excepción para `/home/odoo/.ssh` nunca tenía efecto con un symlink de
+por medio.
+
+**Fix correcto (intento 5, el que quedó):** copiar (no enlazar) las
+llaves físicamente a `/home/odoo/.ssh`, como directorio real e
+independiente, y hacer el `chown` ahí mismo en nuestro propio paso del
+Dockerfile:
+
+```dockerfile
+ONBUILD RUN [ -d ~root/.ssh ] && rm -r ~root/.ssh; \
+            mkdir -p /opt/odoo/custom/ssh \
+            && ln -s /opt/odoo/custom/ssh ~root/.ssh \
+            && rm -rf /home/odoo/.ssh \
+            && cp -a /opt/odoo/custom/ssh /home/odoo/.ssh \
+            && chown -R odoo:odoo /home/odoo/.ssh \
+            && chmod -R u=rwX,go= /opt/odoo/custom/ssh /home/odoo/.ssh \
+            && sync
+```
+
+Al ser una copia física (no symlink), cuando `800-permissions` corre más
+adelante: su primer bloque revierte `/opt/odoo/custom/ssh` a
+`root:odoo` (sin problema — ese path ya no es el que se usa para
+autenticar), y su excepción para `/home/odoo/.ssh` sí logra confirmarlo
+como `odoo:odoo`, porque ya no hay ningún symlink que el `chown -R` (sin
+`-H`) necesite atravesar. Resultado: dos copias de las llaves en la
+imagen (una sin uso real en `/opt/odoo/custom/ssh`, la real en
+`/home/odoo/.ssh`) — duplicación aceptable, son de solo lectura y ya
+están horneadas en la imagen de cualquier forma.
+
+**Cambio correspondiente en `ssh/config`** (repo `odoo-infra-base-template`,
+rama `20.0`): las 3 rutas `IdentityFile` pasaron de
+`/opt/odoo/custom/ssh/deploy_key_*` a `/home/odoo/.ssh/deploy_key_*` —
+que resulta ser la misma convención que ya usa correctamente la plantilla
+real de producción de `18.0`. Un ajuste anterior de este pipeline que
+"corrigió" esa ruta hacia `/opt/odoo/custom/ssh` (razonando que era más
+"físicamente correcta") fue, en realidad, el error que generó buena parte
+de esta investigación.
+
+Confirmado con una instalación real de punta a punta en un servidor EC2
+de pruebas dedicado: los 3 repos privados por SSH (enterprise — 891
+módulos, localización compilada, repo de cliente) se clonaron
+correctamente, confirmado contando archivos reales en disco después de la
+corrida.
+
+Ver también el documento `01-decisiones-arquitectura-v20.docx` (decisión
+D8) para el argumento completo de por qué el enfoque de TRESCLOUD
+(deploy keys fijas de solo lectura) es, por diseño, más seguro que el
+mecanismo nativo de Doodba (agente SSH reenviado).
 
 **Pendiente verificar:** si `18.0` tiene el mismo problema potencial. Su
 `tasks.py` usa un mecanismo de aggregate distinto
