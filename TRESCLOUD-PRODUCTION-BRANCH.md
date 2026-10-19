@@ -53,6 +53,32 @@ principio el patrón ya corregido (alcance global, nombre propio
 imagen oficial) — ver `trescloud-v18-production` para el detalle completo de
 qué salió mal la primera vez.
 
+## Segundo parche: permisos de grupo en `/opt/odoo/custom/ssh`
+
+Línea 273-277 de `20.0.Dockerfile` (código original de Tecnativa, no
+customización nuestra): `autoaggregate` (el script que corre
+`invoke git-aggregate`) baja privilegios a `UID=GID=1000` (el usuario/grupo
+`odoo`) antes de ejecutar `git fetch`, para que el código clonado no quede
+de root. Pero el `chmod -R u=rwX,go=` dejaba las deploy keys legibles
+**solo** por `root` — el grupo `odoo` (GID 1000) no tenía ningún permiso.
+Resultado: en el momento exacto de clonar un repo privado por SSH, el
+proceso ya no es root y no puede leer su propia llave
+(`no such identity: ...: Permission denied`), fallando en silencio porque
+`invoke git-aggregate` corre con reintentos que tragan el error.
+
+Se cambió a `chmod -R u=rwX,g=rX,o=`: el grupo `odoo` gana lectura (que es
+justo con quien corre el fetch), `o=` se mantiene en cero (nada cambia de
+cara a terceros). Confirmado con una instalación real de punta a punta:
+sin este parche, los 3 repos privados por SSH (enterprise, localización
+compilada, repo de cliente) quedaban vacíos aunque el deploy se reportara
+exitoso.
+
+**Pendiente verificar:** si `18.0` tiene el mismo problema potencial. Su
+`tasks.py` usa un mecanismo de aggregate distinto
+(`--file setup-devel.yaml run --rm -T odoo`, sin el `autoaggregate`/baja de
+privilegios), así que probablemente nunca lo expuso — no confirmado
+todavía con una prueba real en esa rama.
+
 ## Cómo se certificaría una actualización de esta rama
 
 Si algún día hace falta adoptar algo nuevo de upstream para v20:
