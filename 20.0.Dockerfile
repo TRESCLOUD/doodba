@@ -273,8 +273,10 @@ ONBUILD ARG LOG_LEVEL=INFO
 ONBUILD RUN [ -d ~root/.ssh ] && rm -r ~root/.ssh; \
             mkdir -p /opt/odoo/custom/ssh \
             && ln -s /opt/odoo/custom/ssh ~root/.ssh \
-            && ln -s /opt/odoo/custom/ssh /home/odoo/.ssh \
-            && chmod -R u=rwX,go= /opt/odoo/custom/ssh \
+            && rm -rf /home/odoo/.ssh \
+            && cp -a /opt/odoo/custom/ssh /home/odoo/.ssh \
+            && chown -R odoo:odoo /home/odoo/.ssh \
+            && chmod -R u=rwX,go= /opt/odoo/custom/ssh /home/odoo/.ssh \
             && sync
 ONBUILD ARG DB_VERSION=latest
 ONBUILD RUN --mount=target=/var/lib/apt/lists,type=cache,id=apt-lists-${TARGETARCH}-${ODOO_VERSION},sharing=locked \
