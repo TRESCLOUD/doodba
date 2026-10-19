@@ -66,20 +66,32 @@ propia llave (`no such identity: ...: Permission denied`), fallando en
 silencio porque `invoke git-aggregate` corre con reintentos que tragan el
 error.
 
-**Primer intento (incorrecto):** dar lectura al grupo `odoo`
+**Intento 1 (incorrecto):** dar lectura al grupo `odoo`
 (`chmod -R u=rwX,g=rX,o=`). Falló distinto: OpenSSH rechaza *cualquier*
 permiso de grupo sobre una llave privada sin importar cuál grupo sea
 (`Permissions 0640 ... are too open`) — no es un chequeo de
 "¿coincide el grupo del que llama?", es un chequeo estricto de que el
 archivo no tenga bits de grupo/otros en absoluto.
 
-**Fix correcto:** cambiar el *dueño* del archivo a `${UID}:${GID}`
-(1000:1000 por defecto, el mismo usuario al que baja privilegios
-`autoaggregate`), manteniendo el chmod estricto original
-(`u=rwX,go=`, sin bits de grupo/otros). Así el proceso que baja a UID 1000
-es el dueño real del archivo y `0600` sigue satisfaciendo a OpenSSH. `root`
-sigue pudiendo leerlo igual (bypassa permisos de archivo por capacidad del
-kernel), así que el symlink `~root/.ssh` no se ve afectado.
+**Intento 2 (incorrecto):** `chown -R ${UID}:${GID}` a **todo** el
+directorio `/opt/odoo/custom/ssh`. Las llaves privadas sí quedaron
+legibles, pero esto también le cambió el dueño a `config` y
+`known_hosts` — y `autoaggregate` sigue usando `$HOME=/root` incluso
+después de bajar a UID 1000 (no cambia `$HOME` al hacer `setuid`), así
+que SSH resuelve `~/.ssh/config` → `/root/.ssh/config` (el symlink).
+OpenSSH exige que ese archivo de configuración sea dueño de `root` o del
+UID que lo invoca — con dueño `1000` falló con
+`Bad owner or permissions on /root/.ssh/config`.
+
+**Fix correcto:** aplicar el `chown ${UID}:${GID}` **solo** a los
+archivos `deploy_key_*` (no a `.pub`, no a `config`, no a `known_hosts`),
+dejando el resto del directorio tal como estaba (dueño `root`, que es
+justo lo que `config`/`known_hosts` necesitan). Las deploy keys quedan
+con dueño real UID 1000 (satisface tanto el chequeo de permisos como el
+de "soy el dueño"), y `config`/`known_hosts` se quedan de `root` como
+siempre. `root` sigue pudiendo leer las llaves igual (bypassa permisos
+de archivo por capacidad del kernel), así que el symlink `~root/.ssh`
+no se ve afectado para ningún otro uso.
 
 Confirmado con una instalación real de punta a punta: sin este parche,
 los 3 repos privados por SSH (enterprise, localización compilada, repo de
